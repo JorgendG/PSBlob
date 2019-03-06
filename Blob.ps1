@@ -10,7 +10,8 @@ Function Generate-MasterKeyAuthorizationSignature
 		[Parameter(Mandatory=$true)][String]$verb,
 		[Parameter(Mandatory=$true)][String]$accountname,
         [Parameter(Mandatory=$false)][String]$container,
-        [Parameter(Mandatory=$true)][String]$operation,
+        [Parameter(Mandatory=$false)][String]$filename,
+        [Parameter(Mandatory=$false)][String]$operation,
 		[Parameter(Mandatory=$true)][String]$dateTime,
 		[Parameter(Mandatory=$true)][String]$key
 	)
@@ -19,12 +20,22 @@ Function Generate-MasterKeyAuthorizationSignature
     if( $container.Length -gt 0 )
     {
         $container = "$container/"
+        if( $filename )
+        {
+            $container = "$container$((Get-ChildItem -File $filename).Name)"
+            $filelength = (Get-ChildItem -File $filename).Length
+            $blobtype = "x-ms-blob-type:BlockBlob`n"
+        }
+    }
+    if( $operation)
+    {
+        $operation = "`n$operation"
     }
 
     $stringtosign = "$verb`n" + # verb
                 "`n" +     # content encoding
                 "`n" +     # content language
-                "`n" +     # content length
+                "$filelength`n" +     # content length
                 "`n" +     # content md5
                 "`n" +     # content type
                 "`n" +     # date
@@ -33,8 +44,9 @@ Function Generate-MasterKeyAuthorizationSignature
                 "`n" +     # if none match
                 "`n" +     # if unmodified since
                 "`n" +     # range
-                "x-ms-date:$dateTime`nx-ms-version:$xmsversion`n" +     # CanonicalizedHeaders
-                "/$accountname/$container`n$operation"       # header 2
+                "$($blobtype)x-ms-date:$dateTime`nx-ms-version:$xmsversion`n" +     # CanonicalizedHeaders
+                "/$accountname/$container$operation"       # header 2
+#Write-Host "String to sign: $stringtosign"                
     [byte[]]$dataBytes = ([System.Text.Encoding]::UTF8).GetBytes($stringtosign)
     $hmacsha256 = New-Object System.Security.Cryptography.HMACSHA256
     $hmacsha256.Key = [Convert]::FromBase64String($key)
@@ -76,6 +88,21 @@ function Get-BlobInContainer($accountname, $container, $MasterKey)
     $responseXml.EnumerationResults.Blobs.Blob
 }
 
+function New-Blob($accountname, $container, $filename, $MasterKey)
+{
+    $Verb = "PUT"
+    $dateTime = [DateTime]::UtcNow.ToString("r")
+    $EndPoint = "https://$accountname.blob.core.windows.net/$container/$((Get-ChildItem -File $filename).Name)"
+
+    $authHeader = Generate-MasterKeyAuthorizationSignature -verb $Verb -accountname $accountname -dateTime $dateTime -key $MasterKey -container $container -filename $filename
+	$header = @{authorization=$authHeader;"x-ms-version"="2015-02-21";"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
+    Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header -InFile $filename
+    
+}
+
+
 Get-BlobContainers -accountname $accountname -MasterKey $MasterKey
 
 Get-BlobInContainer -accountname $accountname -container "restblob" -MasterKey $MasterKey
+
+New-Blob -accountname $accountname -container "restblob" -MasterKey $MasterKey -filename C:\temp\test.txt
