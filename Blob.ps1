@@ -22,8 +22,16 @@ Function Generate-MasterKeyAuthorizationSignature
         $container = "$container/"
         if( $filename )
         {
-            $container = "$container$((Get-ChildItem -File $filename).Name)"
-            $filelength = (Get-ChildItem -File $filename).Length
+            if( $verb -ne 'GET')
+            {
+                $container = "$container$((Get-ChildItem -File $filename).Name)"
+                $filelength = (Get-ChildItem -File $filename).Length
+            }
+            else {
+                $container = "$container$filename"    
+            }
+            #$container = "$container$((Get-ChildItem -File $filename).Name)"
+            
             $blobtype = "x-ms-blob-type:BlockBlob`n"
         }
     }
@@ -55,8 +63,6 @@ Function Generate-MasterKeyAuthorizationSignature
  
     $authhdr
  }
-
-
 
 function Get-BlobContainers($accountname, $MasterKey)
 {
@@ -97,12 +103,23 @@ function New-Blob($accountname, $container, $filename, $MasterKey)
     $authHeader = Generate-MasterKeyAuthorizationSignature -verb $Verb -accountname $accountname -dateTime $dateTime -key $MasterKey -container $container -filename $filename
 	$header = @{authorization=$authHeader;"x-ms-version"="2015-02-21";"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
     Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header -InFile $filename
-    
 }
 
+function Get-Blob($accountname, $container, $filename, $MasterKey)
+{
+    $Verb = "GET"
+    $dateTime = [DateTime]::UtcNow.ToString("r")
+    
+    $EndPoint = "https://$accountname.blob.core.windows.net/$container/$(($filename -split '\\')[-1])"
+
+    $authHeader = Generate-MasterKeyAuthorizationSignature -verb $Verb -accountname $accountname -dateTime $dateTime -key $MasterKey -container $container -filename ($filename -split '\\')[-1]
+	$header = @{authorization=$authHeader;"x-ms-version"="2015-02-21";"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
+    Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header -OutFile $filename
+}
 
 Get-BlobContainers -accountname $accountname -MasterKey $MasterKey
 
 Get-BlobInContainer -accountname $accountname -container "restblob" -MasterKey $MasterKey
 
-New-Blob -accountname $accountname -container "restblob" -MasterKey $MasterKey -filename C:\temp\test.txt
+#New-Blob -accountname $accountname -container "restblob" -MasterKey $MasterKey -filename C:\temp\test.txt
+Get-Blob -accountname $accountname -container "restblob" -MasterKey $MasterKey -filename C:\temp\test.txt
