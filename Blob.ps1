@@ -1,10 +1,6 @@
-$accountname="salononblob"
-$masterkey = Get-Content .\keys.txt
-
 # Define a class
 class RestBlob
 {
-    # Property with validate set
     [string] $AccountName
     [string] $MasterKey
     hidden [string] $xmlversion = "2015-02-21"
@@ -16,7 +12,7 @@ class RestBlob
         $this.MasterKey = $MasterKey
     }
 
-    [string] NewMasterKeyAuthorizationSignature( [string] $verb, [string]$container, [string]$filename, [string] $operation, [string]$dateTime)
+    hidden [string] NewMasterKeyAuthorizationSignature( [string] $verb, [string]$container, [string]$filename, [string] $operation, [string]$dateTime)
     {
         $filelength = ""
         $blobtype = ""
@@ -113,15 +109,18 @@ class RestBlob
         $EndPoint = "https://$($this.accountname).blob.core.windows.net/$container/$(($filename -split '\\')[-1])"
 
         $authHeader = $this.NewMasterKeyAuthorizationSignature( $Verb, $container, ($filename -split '\\')[-1], "", $dateTime )
-        $header = @{authorization=$authHeader;"x-ms-version"="2015-02-21";"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
+        $header = @{authorization=$authHeader;"x-ms-version"=$this.xmlversion;"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
         Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header -OutFile $filename
     }
 }
 
 
+$masterkey = (Get-Content .\keys.txt)[0]
+$accountname=(Get-Content .\keys.txt)[1]
+
 $a = New-Object RestBlob( $accountname, $masterkey)
 $a.ListContainers()
 $a.ListBlobs( 'restblob' )
 $a.ListBlobs( 'blob2' )
-#$a.NewBlob( 'blob2', 'C:\temp\test2.txt' )
+$a.NewBlob( 'blob2', 'C:\temp\test2.txt' )
 $a.GetBlob( 'blob2', 'C:\temp\test2.txt' )
