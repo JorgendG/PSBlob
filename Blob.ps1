@@ -1,125 +1,126 @@
-$accountname="salononblob"
-$masterkey = Get-Content .\keys.txt
-
-# generate authorization key
-Function Generate-MasterKeyAuthorizationSignature
+# Define a class
+class RestBlob
 {
-	[CmdletBinding()]
-	Param
-	(
-		[Parameter(Mandatory=$true)][String]$verb,
-		[Parameter(Mandatory=$true)][String]$accountname,
-        [Parameter(Mandatory=$false)][String]$container,
-        [Parameter(Mandatory=$false)][String]$filename,
-        [Parameter(Mandatory=$false)][String]$operation,
-		[Parameter(Mandatory=$true)][String]$dateTime,
-		[Parameter(Mandatory=$true)][String]$key
-	)
+    [string] $AccountName
+    [string] $MasterKey
+    hidden [string] $xmlversion = "2015-02-21"
 
-	$xmsversion = "2015-02-21"
-    if( $container.Length -gt 0 )
+    # Constructor
+    RestBlob ([string] $accountname, [string] $MasterKey)
     {
-        $container = "$container/"
-        if( $filename )
+        $this.AccountName = $accountname
+        $this.MasterKey = $MasterKey
+    }
+
+    hidden [string] NewMasterKeyAuthorizationSignature( [string] $verb, [string]$container, [string]$filename, [string] $operation, [string]$dateTime)
+    {
+        $filelength = ""
+        $blobtype = ""
+        if( $container.Length -gt 0 )
         {
-            if( $verb -ne 'GET')
+            $container = "$container/"
+            if( $filename )
             {
-                $container = "$container$((Get-ChildItem -File $filename).Name)"
-                $filelength = (Get-ChildItem -File $filename).Length
+                if( $verb -ne 'GET')
+                {
+                    $container = "$container$((Get-ChildItem -File $filename).Name)"
+                    $filelength = (Get-ChildItem -File $filename).Length
+                }
+                else {
+                    $container = "$container$filename"    
+                }
+                $blobtype = "x-ms-blob-type:BlockBlob`n"
             }
-            else {
-                $container = "$container$filename"    
-            }
-            #$container = "$container$((Get-ChildItem -File $filename).Name)"
-            
-            $blobtype = "x-ms-blob-type:BlockBlob`n"
         }
+        if( $operation)
+        {
+            $operation = "`n$operation"
+        }
+
+        $stringtosign = "$verb`n" + # verb
+                    "`n" +     # content encoding
+                    "`n" +     # content language
+                    "$filelength`n" +     # content length
+                    "`n" +     # content md5
+                    "`n" +     # content type
+                    "`n" +     # date
+                    "`n" +     # if modified since
+                    "`n" +     # if match
+                    "`n" +     # if none match
+                    "`n" +     # if unmodified since
+                    "`n" +     # range
+                    "$($blobtype)x-ms-date:$dateTime`nx-ms-version:$($this.xmlversion)`n" +     # CanonicalizedHeaders
+                    "/$($this.accountname)/$container$operation"       # header 2
+        [byte[]]$dataBytes = ([System.Text.Encoding]::UTF8).GetBytes($stringtosign)
+        $hmacsha256 = New-Object System.Security.Cryptography.HMACSHA256
+        $hmacsha256.Key = [Convert]::FromBase64String($this.MasterKey)
+        $sig = [Convert]::ToBase64String($hmacsha256.ComputeHash($dataBytes))
+        $authhdr = "SharedKey $($this.AccountName)`:$sig"
+    
+        return $authhdr
     }
-    if( $operation)
+
+    [string[]]ListContainers()
     {
-        $operation = "`n$operation"
+        $Verb = "GET"
+        $dateTime = [DateTime]::UtcNow.ToString("r")
+        $EndPoint = "https://$($this.accountname).blob.core.windows.net/?comp=list"
+
+        $authHeader = $this.NewMasterKeyAuthorizationSignature( $Verb, "", "", "comp:list", $dateTime )
+
+        $header = @{authorization=$authHeader;"x-ms-version"=$this.xmlversion;"x-ms-date"=$dateTime}
+        $result = Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header
+        [xml]$responseXml = $result.Substring($result.IndexOf("<"))
+
+        return ($responseXml.EnumerationResults.Containers.Container | Select-Object -ExpandProperty name )
     }
 
-    $stringtosign = "$verb`n" + # verb
-                "`n" +     # content encoding
-                "`n" +     # content language
-                "$filelength`n" +     # content length
-                "`n" +     # content md5
-                "`n" +     # content type
-                "`n" +     # date
-                "`n" +     # if modified since
-                "`n" +     # if match
-                "`n" +     # if none match
-                "`n" +     # if unmodified since
-                "`n" +     # range
-                "$($blobtype)x-ms-date:$dateTime`nx-ms-version:$xmsversion`n" +     # CanonicalizedHeaders
-                "/$accountname/$container$operation"       # header 2
-#Write-Host "String to sign: $stringtosign"                
-    [byte[]]$dataBytes = ([System.Text.Encoding]::UTF8).GetBytes($stringtosign)
-    $hmacsha256 = New-Object System.Security.Cryptography.HMACSHA256
-    $hmacsha256.Key = [Convert]::FromBase64String($key)
-    $sig = [Convert]::ToBase64String($hmacsha256.ComputeHash($dataBytes))
-    $authhdr = "SharedKey $accountname`:$sig"
- 
-    $authhdr
- }
+    [string[]]ListBlobs( [string] $container)
+    {
+        $Verb = "GET"
+        $dateTime = [DateTime]::UtcNow.ToString("r")
+        $EndPoint = "https://$($this.AccountName).blob.core.windows.net/$container/?comp=list&restype=container"
 
-function Get-BlobContainers($accountname, $MasterKey)
-{
-    $Verb = "GET"
-    $dateTime = [DateTime]::UtcNow.ToString("r")
-    $EndPoint = "https://$accountname.blob.core.windows.net/?comp=list"
+        $authHeader = $this.NewMasterKeyAuthorizationSignature( $Verb, $container, "", "comp:list`nrestype:container", $dateTime )
 
-    $authHeader = Generate-MasterKeyAuthorizationSignature -verb $Verb -accountname $accountname -dateTime $dateTime -key $MasterKey -operation "comp:list"
+        $header = @{authorization=$authHeader;"x-ms-version"=$this.xmlversion;"x-ms-date"=$dateTime}
+        $result = Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header
+        [xml]$responseXml = $result.Substring($result.IndexOf("<"))
 
-	$header = @{authorization=$authHeader;"x-ms-version"="2015-02-21";"x-ms-date"=$dateTime}
-    $result = Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header
-    [xml]$responseXml = $result.Substring($result.IndexOf("<"))
+        return ($responseXml.EnumerationResults.Blobs.Blob | Select-Object -ExpandProperty name )
+    }
 
-    $responseXml.EnumerationResults.Containers.Container
+    [void]NewBlob( $container, $filename)
+    {
+        $Verb = "PUT"
+        $dateTime = [DateTime]::UtcNow.ToString("r")
+        $EndPoint = "https://$($this.AccountName).blob.core.windows.net/$container/$((Get-ChildItem -File $filename).Name)"
+
+        $authHeader = $this.NewMasterKeyAuthorizationSignature( $Verb, $container, $filename, "", $dateTime )
+        $header = @{authorization=$authHeader;"x-ms-version"=$this.xmlversion;"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
+        Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header -InFile $filename
+    }
+
+    [void]GetBlob($container, $filename)
+    {
+        $Verb = "GET"
+        $dateTime = [DateTime]::UtcNow.ToString("r")
+        
+        $EndPoint = "https://$($this.accountname).blob.core.windows.net/$container/$(($filename -split '\\')[-1])"
+
+        $authHeader = $this.NewMasterKeyAuthorizationSignature( $Verb, $container, ($filename -split '\\')[-1], "", $dateTime )
+        $header = @{authorization=$authHeader;"x-ms-version"=$this.xmlversion;"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
+        Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header -OutFile $filename
+    }
 }
 
-function Get-BlobInContainer($accountname, $container, $MasterKey)
-{
-    $Verb = "GET"
-    $dateTime = [DateTime]::UtcNow.ToString("r")
-    $EndPoint = "https://$accountname.blob.core.windows.net/$container/?comp=list&restype=container"
 
-    $authHeader = Generate-MasterKeyAuthorizationSignature -verb $Verb -accountname $accountname -dateTime $dateTime -key $MasterKey -container $container -operation "comp:list`nrestype:container"
-	$header = @{authorization=$authHeader;"x-ms-version"="2015-02-21";"x-ms-date"=$dateTime}
-    $result = Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header
-    
-    [xml]$responseXml = $result.Substring($result.IndexOf("<"))
+$masterkey = (Get-Content .\keys.txt)[0]
+$accountname=(Get-Content .\keys.txt)[1]
 
-    $responseXml.EnumerationResults.Blobs.Blob
-}
-
-function New-Blob($accountname, $container, $filename, $MasterKey)
-{
-    $Verb = "PUT"
-    $dateTime = [DateTime]::UtcNow.ToString("r")
-    $EndPoint = "https://$accountname.blob.core.windows.net/$container/$((Get-ChildItem -File $filename).Name)"
-
-    $authHeader = Generate-MasterKeyAuthorizationSignature -verb $Verb -accountname $accountname -dateTime $dateTime -key $MasterKey -container $container -filename $filename
-	$header = @{authorization=$authHeader;"x-ms-version"="2015-02-21";"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
-    Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header -InFile $filename
-}
-
-function Get-Blob($accountname, $container, $filename, $MasterKey)
-{
-    $Verb = "GET"
-    $dateTime = [DateTime]::UtcNow.ToString("r")
-    
-    $EndPoint = "https://$accountname.blob.core.windows.net/$container/$(($filename -split '\\')[-1])"
-
-    $authHeader = Generate-MasterKeyAuthorizationSignature -verb $Verb -accountname $accountname -dateTime $dateTime -key $MasterKey -container $container -filename ($filename -split '\\')[-1]
-	$header = @{authorization=$authHeader;"x-ms-version"="2015-02-21";"x-ms-date"=$dateTime;"x-ms-blob-type"="BlockBlob"}
-    Invoke-RestMethod -Method $Verb -Uri $EndPoint -Headers $header -OutFile $filename
-}
-
-Get-BlobContainers -accountname $accountname -MasterKey $MasterKey
-
-Get-BlobInContainer -accountname $accountname -container "restblob" -MasterKey $MasterKey
-
-#New-Blob -accountname $accountname -container "restblob" -MasterKey $MasterKey -filename C:\temp\test.txt
-Get-Blob -accountname $accountname -container "restblob" -MasterKey $MasterKey -filename C:\temp\test.txt
+$a = New-Object RestBlob( $accountname, $masterkey)
+$a.ListContainers()
+$a.ListBlobs( 'restblob' )
+$a.ListBlobs( 'blob2' )
+$a.NewBlob( 'blob2', 'C:\temp\test2.txt' )
+$a.GetBlob( 'blob2', 'C:\temp\test2.txt' )

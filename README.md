@@ -1,12 +1,12 @@
 # PSBlob
 Powershell and Blob storage using RESTapi
 
-Change these variables to make it work for your account.
+Create a keys.txt file to make it for for your account.
+First line contains the access key, the second line the accountname.
 ```
-$accountname = "yourblobaccountname"
-$masterkey = Get-Content .\keys.txt
+$masterkey = (Get-Content .\keys.txt)[0]
+$accountname=(Get-Content .\keys.txt)[1]
 ```
-The keys.txt is a textfile containing the access key.
 
 This script use the REST api to interact with Blob object.
 
@@ -17,11 +17,13 @@ I've created/copied/modified 3 functions.
 
 
 ```
-Get-BlobContainers -accountname $accountname -MasterKey $MasterKey
+$accountname="myaccount"
+$masterkey = Get-Content .\keys.txt
 
-
-Name     Properties
-----     ----------
-blob2    Properties
-restblob Properties
+$a = New-Object RestBlob( $accountname, $masterkey)
+$a.ListContainers()
+$a.ListBlobs( 'restblob' )
+$a.ListBlobs( 'blob2' )
+$a.NewBlob( 'blob2', 'C:\temp\test2.txt' )
+$a.GetBlob( 'blob2', 'C:\temp\test2.txt' )
 ```
